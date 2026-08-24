@@ -1,13 +1,5 @@
-# Environment – never commit real tokens
 .env
-
-# Python
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
-.venv/
-venv/
-env/
-*.egg-info/
-dist/
-build/
+.DS_Store
