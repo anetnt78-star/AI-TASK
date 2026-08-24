@@ -46,6 +46,7 @@ Backup 담당자 : 고승열 님
 | `chat:write.public` | 봇이 채널 멤버가 아니어도 발송 가능 |
 | `channels:read` | `find_channel_id.py` 로 공개 채널 ID 조회 |
 | `groups:read` | `find_channel_id.py` 로 비공개 채널 ID 조회 |
+| `users.profile:write` | 본인 Slack 상태(status) 자동 설정 |
 
 ### 3) 앱 설치 및 토큰 복사
 

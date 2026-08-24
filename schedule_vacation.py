@@ -25,12 +25,20 @@ SCHEDULE_TIMES = {
     '오후 반차': (14, 30),
 }
 
+STATUS_EXPIRY = {
+    '연차':    (23, 59, 59),
+    '오전 반차': (14, 30,  0),
+    '오후 반차': (23, 59, 59),
+}
+
 SLACK_ERROR_HINTS = {
     'time_in_past': '예약 시간이 현재 시각보다 과거입니다. 최소 5분 이후로 설정해 주세요.',
     'time_too_far': '예약 시간이 120일을 초과합니다.',
     'channel_not_found': '채널을 찾을 수 없습니다. SLACK_CHANNEL_ID를 확인해 주세요.',
     'not_in_channel': 'Bot이 채널에 초대되지 않았습니다. /invite @Bot 명령으로 초대해 주세요.',
     'invalid_auth': 'Slack 토큰이 올바르지 않습니다. SLACK_BOT_TOKEN을 확인해 주세요.',
+    'cannot_update_admin_user': '본인 계정의 상태만 변경할 수 있습니다.',
+    'not_allowed_token_type': 'users.profile:write 스코프가 필요합니다.',
 }
 
 # ── 설정 로드 ──────────────────────────────────────────────────────────
@@ -95,6 +103,21 @@ def schedule_slack_message(client: WebClient, channel_id: str, text: str, post_a
         post_at=post_at,
     )
 
+def set_slack_status(client: WebClient, target_date: date, leave_type: str):
+    hour, minute, second = STATUS_EXPIRY[leave_type]
+    naive_dt = datetime(target_date.year, target_date.month, target_date.day, hour, minute, second)
+    expiry_ts = int(KST.localize(naive_dt).timestamp())
+
+    client.users_profile_set(
+        profile={
+            "status_text": "휴가 중",
+            "status_emoji": ":palm_tree:",
+            "status_expiration": expiry_ts,
+        }
+    )
+    expiry_str = KST.localize(naive_dt).strftime('%Y-%m-%d %H:%M')
+    print(f'  상태 설정     : 🌴 휴가 중 (만료: {expiry_str} KST)')
+
 # ── 대화형 입력 ────────────────────────────────────────────────────────
 def prompt_for_input() -> list:
     print('입력 형식: YYYYMMDD 이름 휴가종류')
@@ -144,12 +167,16 @@ def main():
     hour, _ = SCHEDULE_TIMES[leave_type]
 
     # 미리보기 출력
+    expiry_hour, expiry_min, _ = STATUS_EXPIRY[leave_type]
+    expiry_naive = datetime(target_date.year, target_date.month, target_date.day, expiry_hour, expiry_min)
+    expiry_str = KST.localize(expiry_naive).strftime('%H:%M')
     print()
     print('─' * 44)
     print(f'  담당자      : {name}')
     print(f'  채널        : {CHANNEL_DISPLAY}')
     print(f'  발송 예정   : {scheduled_dt.strftime("%Y-%m-%d %H:%M")} KST')
     print(f'  Backup      : {backup_person} 님')
+    print(f'  상태 만료     : {target_date.strftime("%Y-%m-%d")} {expiry_str} KST')
     print()
     print('[ 메시지 미리보기 ]')
     print('─' * 44)
@@ -176,6 +203,7 @@ def main():
     try:
         client = WebClient(token=token)
         response = schedule_slack_message(client, channel_id, message, post_at)
+        set_slack_status(client, target_date, leave_type)
         msg_id = response.get('scheduled_message_id', 'N/A')
         print()
         print('🎉 예약 완료!')
