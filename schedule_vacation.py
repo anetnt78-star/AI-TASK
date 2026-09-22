@@ -3,7 +3,9 @@
 
 import argparse
 import os
+import subprocess
 import sys
+import tempfile
 from datetime import datetime, date, timedelta
 
 import pytz
@@ -118,6 +120,61 @@ def set_slack_status(client: WebClient, target_date: date, leave_type: str):
     expiry_str = KST.localize(naive_dt).strftime('%Y-%m-%d %H:%M')
     print(f'  상태 설정     : 🌴 휴가 중 (만료: {expiry_str} KST)')
 
+def schedule_status_background(token: str, target_date: date, leave_type: str, post_at: int):
+    now_ts = int(datetime.now().timestamp())
+    delay_seconds = max(0, post_at - now_ts)
+
+    expiry_hour, expiry_min, expiry_sec = STATUS_EXPIRY[leave_type]
+    expiry_naive = datetime(target_date.year, target_date.month, target_date.day,
+                            expiry_hour, expiry_min, expiry_sec)
+    expiry_ts = int(KST.localize(expiry_naive).timestamp())
+    env_path = os.path.abspath('.env')
+
+    script_content = f"""import time, os, sys
+from dotenv import load_dotenv
+from slack_sdk import WebClient
+
+time.sleep({delay_seconds})
+load_dotenv({repr(env_path)})
+token = os.environ.get('SLACK_BOT_TOKEN', '')
+if not token:
+    sys.exit(1)
+client = WebClient(token=token)
+try:
+    client.users_profile_set(profile={{
+        "status_text": "휴가 중",
+        "status_emoji": ":palm_tree:",
+        "status_expiration": {expiry_ts},
+    }})
+except Exception:
+    pass
+try:
+    os.remove(__file__)
+except Exception:
+    pass
+"""
+
+    fd, script_path = tempfile.mkstemp(suffix='.py', prefix='slack_status_')
+    try:
+        os.write(fd, script_content.encode('utf-8'))
+        os.close(fd)
+        os.chmod(script_path, 0o600)
+    except Exception:
+        os.close(fd)
+        raise
+
+    subprocess.Popen(
+        [sys.executable, script_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    send_dt = datetime.fromtimestamp(post_at, tz=KST)
+    expiry_str = KST.localize(expiry_naive).strftime('%H:%M')
+    print(f'  상태 예약     : 🌴 휴가 중 ({send_dt.strftime("%H:%M")} KST 변경 예정, 만료: {expiry_str} KST)')
+    print(f'                  ※ 이 컴퓨터가 켜져 있어야 상태가 변경됩니다.')
+
 # ── 대화형 입력 ────────────────────────────────────────────────────────
 def prompt_for_input() -> list:
     print('입력 형식: YYYYMMDD 이름 휴가종류')
@@ -176,7 +233,8 @@ def main():
     print(f'  채널        : {CHANNEL_DISPLAY}')
     print(f'  발송 예정   : {scheduled_dt.strftime("%Y-%m-%d %H:%M")} KST')
     print(f'  Backup      : {backup_person} 님')
-    print(f'  상태 만료     : {target_date.strftime("%Y-%m-%d")} {expiry_str} KST')
+    print(f'  상태 변경   : {scheduled_dt.strftime("%H:%M")} KST (발송 시각과 동일)')
+    print(f'  상태 만료   : {target_date.strftime("%Y-%m-%d")} {expiry_str} KST')
     print()
     print('[ 메시지 미리보기 ]')
     print('─' * 44)
@@ -203,13 +261,14 @@ def main():
     try:
         client = WebClient(token=token)
         response = schedule_slack_message(client, channel_id, message, post_at)
-        set_slack_status(client, target_date, leave_type)
+        schedule_status_background(token, target_date, leave_type, post_at)
         msg_id = response.get('scheduled_message_id', 'N/A')
         print()
         print('🎉 예약 완료!')
         print(f'  scheduled_message_id : {msg_id}')
         print(f'  채널                 : {channel_id}')
         print(f'  발송 예정 시간       : {scheduled_dt.strftime("%Y-%m-%d %H:%M")} KST')
+        print(f'  상태 변경 예정       : {scheduled_dt.strftime("%H:%M")} KST (발송 시각과 동일)')
     except SlackApiError as e:
         error_code = e.response.get('error', 'unknown')
         hint = SLACK_ERROR_HINTS.get(error_code, f'Slack API 오류: {error_code}')
